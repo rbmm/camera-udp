@@ -456,7 +456,6 @@ CEncTcp::~CEncTcp()
 		_M_buf = 0;
 	}
 	Stop();
-	ZwAlertThreadByThreadId(_hThreadId);
 }
 
 class TClientServerR : public CClientServerR

@@ -10,7 +10,6 @@ class CEncTcp : public Endpoint
 
 	PWSTR _M_buf = 0;
 	KsRead* _pin = 0;
-	HANDLE _hThreadId = (HANDLE)GetCurrentThreadId();
 
 	NTSTATUS Stop();
 

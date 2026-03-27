@@ -15,6 +15,7 @@ class CSvc : public CSvcBase
 	virtual HRESULT Run()
 	{
 		DbgPrint("+++ Run\r\n");
+
 		static const LARGE_INTEGER Interval = { 0, (LONG)MINLONG };
 
 		// \ncrc2\ncrc1
