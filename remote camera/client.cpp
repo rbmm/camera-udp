@@ -3,7 +3,7 @@
 _NT_BEGIN
 #include "log.h"
 #include "video.h"
-#include "file.h"
+#include "util.h"
 #include "utils.h"
 #include "server.h"
 #include "client.h"
@@ -67,12 +67,14 @@ CClient::~CClient()
 {
 	if (_vid) _vid->Release();
 	//PostMessageW(_hwnd, VBmp::e_set, 0, 0);
+	DestroyKey();
 	DbgPrint("%hs<%p>\r\n", __FUNCTION__, this);
 }
 
 NTSTATUS CClient::OnConnect()
 {
 	DbgPrint("%hs<%p>\r\n", __FUNCTION__, this);
+	DestroyKey();
 	PostMessageW(_hwndDlg, VBmp::e_connected, 0, 1);
 	return 0;
 }
@@ -80,13 +82,15 @@ NTSTATUS CClient::OnConnect()
 void CClient::OnDisconnect()
 {
 	DbgPrint("%hs<%p>\r\n", __FUNCTION__, this);
+	DestroyKey();
 	if (_vid) _vid->Release(), _vid = 0;
 	PostMessageW(_hwndDlg, VBmp::e_disconnected, 0, 0);
 }
 
 NTSTATUS CClient::OnUserData(ULONG type, PBYTE pb, ULONG cb)
 {
-	if ('H264' != type) DbgPrint("%hs<%p>(%.4hs %x)\r\n", __FUNCTION__, this, &type, cb);
+	//if ('H264' != type) 
+		DbgPrint("%hs<%p>(%.4hs %x)\r\n", __FUNCTION__, this, &type, cb);
 
 	switch (type)
 	{
@@ -158,6 +162,11 @@ class TClientServerR : public CClientServerR
 	{
 		return 0;
 	}
+	virtual HRESULT CreatePubKey(_Out_ BCRYPT_KEY_HANDLE* phKey, _In_ PBYTE /*pb*/, _In_ ULONG /*cb*/)
+	{
+		*phKey = 0;
+		return NTE_NOT_SUPPORTED;
+	}
 public:
 	using CClientServerR::CClientServerR;
 };
@@ -165,7 +174,7 @@ public:
 BOOL CreateClient(CClient** ppcln, HWND hwndDlg, HWND hwnd)
 {
 	BOOL fOk = FALSE;
-	if (CClientServerR* c = new TClientServerR(0, 0, "client"))
+	if (CClientServerR* c = new TClientServerR("client"))
 	{
 		SOCKADDR_INET sa{};
 		sa.Ipv4.sin_family = AF_INET;

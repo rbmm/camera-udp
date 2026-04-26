@@ -76,43 +76,46 @@ int CustomMessageBox(HWND hWnd, PCWSTR lpText, PCWSTR lpszCaption, UINT uType)
 	return i;
 }
 
-HMODULE GetNtMod()
-{
-	static HMODULE s_hntmod;
-	if (!s_hntmod)
-	{
-		s_hntmod = GetModuleHandle(L"ntdll");
-	}
-
-	return s_hntmod;
-}
+HMODULE GetNTDLL();
 
 int ShowErrorBox(HWND hwnd, HRESULT dwError, PCWSTR lpCaption)
 {
 	int r = 0;
+	LONG f = 0;
 	LPCVOID lpSource = 0;
 	ULONG dwFlags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS;
 
-	if ((dwError & FACILITY_NT_BIT) || (0 > dwError && HRESULT_FACILITY(dwError) == FACILITY_NULL))
+	if ((dwError & FACILITY_NT_BIT) || (0 > dwError && FACILITY_NULL == HRESULT_FACILITY(dwError)))
 	{
 		dwError &= ~FACILITY_NT_BIT;
-__nt:
+	__nt:
 		dwFlags = FORMAT_MESSAGE_FROM_HMODULE | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS;
 
-		lpSource = GetNtMod();
+		lpSource = GetNTDLL();
 	}
-
+__0:
 	PWSTR lpText;
 	if (FormatMessageW(dwFlags, lpSource, dwError, 0, (PWSTR)&lpText, 0, 0))
 	{
 		r = CustomMessageBox(hwnd, lpText, lpCaption, dwError ? MB_ICONERROR : MB_ICONINFORMATION);
 		LocalFree(lpText);
 	}
-	else if (dwFlags & FORMAT_MESSAGE_FROM_SYSTEM)
+	else if (!_bittestandset(&f, 1))
 	{
-		goto __nt;
+		if (dwFlags & FORMAT_MESSAGE_FROM_SYSTEM)
+		{
+			goto __nt;
+		}
+
+		if (FACILITY_NULL == HRESULT_FACILITY(dwError))
+		{
+			lpSource = 0;
+			dwFlags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_IGNORE_INSERTS;
+			goto __0;
+		}
 	}
 
 	return r;
 }
+
 _NT_END

@@ -109,9 +109,9 @@ HRESULT H264::GetOutput(_Out_ PULONG rgba)
 {
 	ULONG dwStatus;
 
-	for (;;)
+	for (m_out.dwStatus;;)
 	{
-		switch (HRESULT hr = m_decoder->ProcessOutput(0, 1, &m_out, &dwStatus))
+		switch (HRESULT hr = m_decoder->ProcessOutput(0, 1, &m_out, &(dwStatus = 0)))
 		{
 		default:
 			DbgPrint("!! hr=%x, %x, %x\r\n", hr, dwStatus, m_out.dwStatus);
@@ -134,7 +134,7 @@ HRESULT H264::GetOutput(_Out_ PULONG rgba)
 			if (m_out.pEvents)
 			{
 				m_out.pEvents->Release();
-				m_out.pEvents = nullptr; // Обязательно обнулить для следующего вызова
+				m_out.pEvents = 0; 
 			}
 			if (0 <= (hr = m_pBuffer->Lock(&pb, &cbMaxLength, &cbCurrentLength)))
 			{
@@ -145,6 +145,7 @@ HRESULT H264::GetOutput(_Out_ PULONG rgba)
 				}
 				m_pBuffer->Unlock();
 				m_pBuffer->SetCurrentLength(0);
+				m_out.dwStatus = 0;
 				continue;
 			}
 			return hr;

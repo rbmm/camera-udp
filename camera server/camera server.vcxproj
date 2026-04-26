@@ -30,7 +30,7 @@
     <ClCompile>
       <WarningLevel>Level4</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
-      <Optimization>MaxSpeed</Optimization>
+      <Optimization>Disabled</Optimization>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -40,27 +40,30 @@
       <EntryPointSymbol>ep</EntryPointSymbol>
       <AdditionalOptions>/EMITPOGOPHASEINFO /EMITVOLATILEMETADATA:NO %(AdditionalOptions)</AdditionalOptions>
       <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">asio.lib;ntver.lib;cfgmgr32.lib;bcrypt.lib;ws2_32.lib;mswsock.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='Release|x64'">asio.lib;ntver.lib;cfgmgr32.lib;bcrypt.lib;ws2_32.lib;mswsock.lib;Mfplat.lib;ole32.lib;detour.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='Release|x64'">asio.lib;ntver.lib;cfgmgr32.lib;bcrypt.lib;ncrypt.lib;crypt32.lib;ws2_32.lib;mswsock.lib;Mfplat.lib;ole32.lib;detour.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AlertByThreadId.cpp" />
     <ClCompile Include="H264.cpp" />
     <ClCompile Include="mf.cpp" />
+    <ClCompile Include="pkt.cpp" />
     <ClCompile Include="SvcBase.cpp" />
     <ClCompile Include="TUDP.cpp" />
+    <ClCompile Include="util.cpp" />
     <ClCompile Include="utils.cpp" />
+    <ClInclude Include="AlertByThreadId.h" />
     <ClInclude Include="compressor.h" />
     <ClInclude Include="file.h" />
     <ClInclude Include="H264.h" />
     <ClInclude Include="log.h" />
+    <ClInclude Include="pkt.h" />
     <ClInclude Include="read.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="server.h" />
     <ClInclude Include="stdafx.h" />
     <ClCompile Include="ep.cpp" />
-    <ClCompile Include="file.cpp" />
     <ClCompile Include="install.cpp" />
-    <ClCompile Include="key.cpp" />
     <ClCompile Include="log.cpp" />
     <ClCompile Include="read.cpp" />
     <ClCompile Include="server.cpp" />
@@ -70,6 +73,7 @@
     <ClInclude Include="SvcBase.h" />
     <ClInclude Include="TUDP.h" />
     <ClInclude Include="userendp.h" />
+    <ClInclude Include="util.h" />
     <ClInclude Include="utils.h" />
   </ItemGroup>
   <ItemGroup>

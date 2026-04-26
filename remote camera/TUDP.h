@@ -30,33 +30,29 @@ class __declspec(novtable) Endpoint : LIST_ENTRY
 	ULONG64 m_cookie, m_rcookie = 0;
 	ULONG64 m_tick = GetTickCount64() + e_inactive_time;
 	LONG64 m_bits = 0;
-	BCRYPT_KEY_HANDLE m_hPriv = 0, m_hPub = 0;
+	BCRYPT_KEY_HANDLE m_hKey = 0;
 	CClientServerR* m_parent;
 	SRWLOCK m_lock = {};
 	MSGB* m_msgb = 0;
 	RundownProtection m_rp;
 	Endpoint* m_next = 0;
-	ULONG m_PubBlockLength = 0, m_PrivBlockLength = 0;
 	LONG m_dwRefCount = 1;
 	LONG m_flags = 0;
 	SOCKADDR_INET m_sa {};
 	ULONG m_t = 0;
 	SHORT m_M = 0;
 
-	NTSTATUS LoadPubKey(ULONG64 crc);
-	NTSTATUS LoadPrivKey(ULONG64 crc2, ULONG64 crc1);
-
 	NTSTATUS SendMsg(ULONG MsgLength, ULONG type, PBYTE pb, ULONG cb, USHORT M, USHORT N);
 
 	NTSTATUS OnData(E_PACKET* packet, ULONG cb);
-	NTSTATUS OnConnect(ULONG64 crc, ULONG64 cookie);
-	NTSTATUS Accept(PSOCKADDR_INET psi, ULONG64 crc2, ULONG64 crc1, ULONG64 crc, ULONG64 cookie);
-	NTSTATUS Init(PSOCKADDR_INET psi, ULONG64 crc2, ULONG64 crc1, ULONG64 cookie = 0);
+	NTSTATUS Init(PSOCKADDR_INET psi, ULONG64 rcookie);
 
 	virtual NTSTATUS Accept(PSOCKADDR_INET psi) = 0;
 	virtual NTSTATUS OnConnect() = 0;
 	virtual void OnDisconnect() = 0;
 	virtual NTSTATUS OnUserData(ULONG type, PBYTE pb, ULONG cb) = 0;
+
+	virtual BCRYPT_KEY_HANDLE GetPrivateKey() = 0;
 
 	MSGB* get(ULONG M, ULONG cbMsg);
 
@@ -83,7 +79,7 @@ public:
 		}
 	}
 
-	NTSTATUS Connect(PSOCKADDR_INET psi, ULONG64 crc2, ULONG64 crc1);
+	NTSTATUS Connect(PSOCKADDR_INET psi, _In_opt_ PBYTE pb, _In_opt_ ULONG cb);
 	NTSTATUS SendUserData(ULONG type, PBYTE pb = 0, ULONG cb = 0);
 
 	void Disconnect();
@@ -99,9 +95,7 @@ class __declspec(novtable) CClientServerR : public CUdpEndpoint, LIST_ENTRY
 {
 	friend Endpoint;
 
-	ULONG64 m_crc2, m_crc1;
 	PCSTR m_name;
-	BCRYPT_ALG_HANDLE m_hAesProv = 0;
 	SRWLOCK m_lock = {};
 	PTP_TIMER _M_Timer = 0;
 	LONG m_nPackets = 0;
@@ -124,17 +118,19 @@ class __declspec(novtable) CClientServerR : public CUdpEndpoint, LIST_ENTRY
 
 	virtual void OnRecv(PSTR buf, ULONG cb, CDataPacket* packet, SOCKADDR_IN_EX* from);
 
-	void OnConnect(C_PACKET* packet, PSOCKADDR_INET psi);
+	void OnConnect(_In_ ULONG64 client_cookie, _In_ PBYTE pb, _In_ ULONG cb, PSOCKADDR_INET psi);
 	void OnDisconnect(ULONG64 cookie, PSOCKADDR_INET psi);
 	void OnPing(P_PACKET* packet, PSOCKADDR_INET psi);
 	void OnData(PBYTE pb, ULONG cb, PSOCKADDR_INET psi);
 
 	virtual Endpoint* CreateEndpoint() = 0;
 
+	virtual HRESULT CreatePubKey(_Out_ BCRYPT_KEY_HANDLE* phKey, _In_ PBYTE pb, _In_ ULONG cb) = 0;
+
 public:
 	void Stop();
 
-	CClientServerR(ULONG64 crc2, ULONG64 crc1, PCSTR name) : m_name(name), m_crc2(crc2), m_crc1(crc1)
+	CClientServerR(PCSTR name) : m_name(name)
 	{
 		DbgPrint("%hs<%p>\r\n", __FUNCTION__, this);
 		InitializeListHead(this);
@@ -143,7 +139,6 @@ public:
 	~CClientServerR()
 	{
 		deleteTimer();
-		if (m_hAesProv) BCryptCloseAlgorithmProvider(m_hAesProv, 0);
 		DbgPrint("%hs<%p>\r\n", __FUNCTION__, this);
 	}
 

@@ -9,6 +9,7 @@ NTSTATUS GetKeyCrc(BCRYPT_KEY_HANDLE hKey, PULONGLONG pcrc);
 class CClient : public Endpoint, public H264
 {
 	LONGLONG _crc = 0, _cbData;
+	BCRYPT_KEY_HANDLE _hKey = 0;
 	HWND _hwnd, _hwndDlg;
 	VBmp* _vid = 0;
 	ULONG _biCompression, _biWidth, _biHeight;
@@ -20,6 +21,11 @@ class CClient : public Endpoint, public H264
 	virtual void OnDisconnect();
 
 	virtual NTSTATUS OnUserData(ULONG type, PBYTE pb, ULONG cb);
+
+	virtual BCRYPT_KEY_HANDLE GetPrivateKey()
+	{
+		return _hKey;
+	}
 
 	virtual ~CClient();
 
@@ -55,6 +61,20 @@ public:
 
 	CClient(CClientServerR* parent, HWND hwndDlg, HWND hwnd) : Endpoint(parent), _hwnd(hwnd), _hwndDlg(hwndDlg)
 	{
+	}
+
+	void DestroyKey()
+	{
+		if (_hKey) BCryptDestroyKey(_hKey), _hKey = 0;
+	}
+
+	void SetPrivateKey(BCRYPT_KEY_HANDLE hKey)
+	{
+		if (_hKey)
+		{
+			__debugbreak();
+		}
+		_hKey = hKey;
 	}
 };
 

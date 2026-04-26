@@ -44,25 +44,27 @@
       <EntryPointSymbol>ep</EntryPointSymbol>
       <AdditionalOptions>/EMITPOGOPHASEINFO /EMITVOLATILEMETADATA:NO %(AdditionalOptions)</AdditionalOptions>
       <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">winz.lib;asio.lib;ntver.lib;gdi32.lib;comctl32.lib;ole32.lib;cfgmgr32.lib;shell32.lib;bcrypt.lib;ws2_32.lib;mswsock.lib;shlwapi.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='Release|x64'">winz.lib;asio.lib;ntver.lib;gdi32.lib;comctl32.lib;ole32.lib;cfgmgr32.lib;shell32.lib;bcrypt.lib;ws2_32.lib;mswsock.lib;shlwapi.lib;Mfplat.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies Condition="'$(Configuration)|$(Platform)'=='Release|x64'">winz.lib;asio.lib;ntver.lib;gdi32.lib;comctl32.lib;ole32.lib;cfgmgr32.lib;shell32.lib;bcrypt.lib;crypt32.lib;ncrypt.lib;ws2_32.lib;mswsock.lib;shlwapi.lib;mfplat.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AlertByThreadId.cpp" />
     <ClCompile Include="H264.cpp" />
-    <ClCompile Include="key.cpp" />
+    <ClCompile Include="pkt.cpp" />
     <ClCompile Include="TUDP.cpp" />
+    <ClCompile Include="util.cpp" />
     <ClCompile Include="utils.cpp" />
     <ClCompile Include="video.cpp" />
+    <ClInclude Include="AlertByThreadId.h" />
     <ClInclude Include="client.h" />
-    <ClInclude Include="file.h" />
     <ClInclude Include="H264.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="msgbox.h" />
+    <ClInclude Include="pkt.h" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="stdafx.h" />
     <ClCompile Include="client.cpp" />
     <ClCompile Include="ep.cpp" />
-    <ClCompile Include="file.cpp" />
     <ClCompile Include="log.cpp" />
     <ClCompile Include="msgbox.cpp" />
     <ClCompile Include="render.cpp" />
@@ -70,6 +72,7 @@
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
     <ClInclude Include="TUDP.h" />
+    <ClInclude Include="util.h" />
     <ClInclude Include="utils.h" />
     <ClInclude Include="video.h" />
   </ItemGroup>

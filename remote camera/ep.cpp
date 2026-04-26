@@ -11,6 +11,7 @@ _NT_BEGIN
 #include "../winZ/cursors.h"
 #include "log.h"
 
+#include "util.h"
 #include "utils.h"
 #include "msgbox.h"
 #include "video.h"
@@ -22,7 +23,7 @@ extern const volatile UCHAR guz = 0;
 #define ID_CAMERA IDC_COMBO1
 #define ID_FORMAT IDC_COMBO2
 #define ID_STATUS IDC_STATIC1
-#define ID_FPS    IDC_CHECK1
+#define ID_SHOWPASS IDC_CHECK1
 #define ID_VIDEO  IDC_CUSTOM1
 #define ID_LOG    IDC_BUTTON1
 #define ID_REFRESH    IDC_BUTTON2
@@ -32,10 +33,10 @@ extern const volatile UCHAR guz = 0;
 #define ID_CONNECT IDC_BUTTON5
 #define ID_DISCONNECT IDC_BUTTON6
 #define ID_HIDE IDC_BUTTON7
-#define ID_CRC IDC_EDIT2
+#define ID_PFX IDC_EDIT2
+#define ID_PASSWORD IDC_EDIT3
 #define ID_IP IDC_IPADDRESS1
 
-void StartKiosk();
 BOOL ValidateFormats(PVOID buf, ULONG cb, BOOL bPrint);
 
 class WCDlg : public ZDlg, CUILayot, CIcons
@@ -51,6 +52,7 @@ class WCDlg : public ZDlg, CUILayot, CIcons
 	CClient* _pTarget = 0;
 	HFONT _hfont = 0;
 	HMENU _hmenu = 0;
+	WPARAM _passchar = 0;
 	int _i = -1;
 	UINT _uTaskbarRestart;
 	LONG _flags = (1 << e_path_not_valid) | (1 << e_bits_not_valid);
@@ -245,40 +247,44 @@ BOOL WCDlg::Connect(HWND hwndDlg)
 		return FALSE;
 	}
 
-	WCHAR name[34], *pc;
-	if (32 != GetDlgItemTextW(hwndDlg, ID_CRC, name, _countof(name)))
+	ULONG len = (ULONG)SendDlgItemMessageW(hwndDlg, ID_PFX, WM_GETTEXTLENGTH, 0, 0);
+	if (!len)
 	{
+		SetFocus(GetDlgItem(hwndDlg, ID_PFX));
 		return FALSE;
 	}
-
-	ULONG64 crc1 = _wcstoui64(name + 16, &pc, 16);
-
-	if (*pc)
+	ULONG pass_len = (ULONG)SendDlgItemMessageW(hwndDlg, ID_SHOWPASS, WM_GETTEXTLENGTH, 0, 0);
+	if (PWSTR pszPFX = (PWSTR)_malloca((++len + ++pass_len) * sizeof(WCHAR)))
 	{
-		return FALSE;
+		len = GetDlgItemTextW(hwndDlg, ID_PFX, pszPFX, len);
+		PWSTR password = pszPFX + len + 1;
+		GetDlgItemTextW(hwndDlg, ID_PASSWORD, password, pass_len);
+		BCRYPT_KEY_HANDLE hPrivKey = 0;
+		UCHAR pbHash[SHA1_DIGEST_SIZE];
+		HRESULT hr = PFXImport(FALSE, pszPFX, password, &hPrivKey, 0, pbHash);
+		_freea(pszPFX);
+		if (hr)
+		{
+			ShowErrorBox(hwndDlg, hr, 0);
+			return FALSE;
+		}
+		_pTarget->SetPrivateKey(hPrivKey);
+		NTSTATUS status;
+		SOCKADDR_INET sa{};
+		sa.Ipv4.sin_family = AF_INET;
+		sa.Ipv4.sin_addr.S_un.S_addr = _byteswap_ulong(ip);
+		sa.Ipv4.sin_port = 0x3333;
+		if (status = _pTarget->Connect(&sa, pbHash, sizeof(pbHash)))
+		{
+			_pTarget->DestroyKey();
+			ShowErrorBox(hwndDlg, status, 0);
+		}
+		else
+		{
+			_bConnected = TRUE;
+			return TRUE;
+		}
 	}
-
-	name[16] = 0;
-
-	ULONG64 crc2 = _wcstoui64(name, &pc, 16);
-
-	if (*pc)
-	{
-		return FALSE;
-	}
-
-	NTSTATUS status;
-	SOCKADDR_INET sa{};
-	sa.Ipv4.sin_family = AF_INET;
-	sa.Ipv4.sin_addr.S_un.S_addr = _byteswap_ulong(ip);
-	sa.Ipv4.sin_port = 0x3333;
-	if (!(status = _pTarget->Connect(&sa, crc2, crc1)))
-	{
-		_bConnected = TRUE;
-		return TRUE;
-	}
-
-	ShowErrorBox(hwndDlg, status, 0);
 
 	return FALSE;
 }
@@ -335,7 +341,7 @@ INT_PTR WCDlg::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 		{
 			_bConnected = false;
 			ShowErrorBox(hwndDlg, (ULONG)wParam, L"connect fail");
-			EnableCtrlsEx(hwndDlg, ID_CONNECT, ID_CRC, ID_IP, 0, 0);
+			EnableCtrlsEx(hwndDlg, ID_CONNECT, ID_PFX, ID_PASSWORD, ID_IP, 0, 0);
 		}
 		else
 		{
@@ -359,10 +365,13 @@ INT_PTR WCDlg::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				LONGLONG cb = _pTarget->getDataSize();
 				ULONG64 time = GetTickCount64();
 				WCHAR buf2[32], buf[64];
-				StrFormatByteSizeW((cb - _cbTransfered) * 8000 / (time - _time), buf2, _countof(buf2));
-				swprintf_s(buf, _countof(buf), L"Camera  [%ws/s]", buf2);
-				_time = time, _cbTransfered = cb;
-				SetWindowTextW(hwndDlg, buf);
+				if (_time != time)
+				{
+					StrFormatByteSizeW((cb - _cbTransfered) * 8000 / (time - _time), buf2, _countof(buf2));
+					swprintf_s(buf, _countof(buf), L"Camera  [%ws/s]", buf2);
+					_time = time, _cbTransfered = cb;
+					SetWindowTextW(hwndDlg, buf);
+				}
 			}
 		}
 		break;
@@ -377,7 +386,7 @@ INT_PTR WCDlg::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			SetWindowTextW(hwndDlg, L"Camera");
 		}
 		FreeFormats(hwndDlg);
-		EnableCtrlsEx(hwndDlg, ID_CONNECT, ID_CRC, ID_IP, 0, IDOK, IDABORT, ID_DISCONNECT, ID_REFRESH, ID_CAMERA, ID_FORMAT, 0);
+		EnableCtrlsEx(hwndDlg, ID_CONNECT, ID_PFX, ID_PASSWORD, ID_IP, 0, IDOK, IDABORT, ID_DISCONNECT, ID_REFRESH, ID_CAMERA, ID_FORMAT, 0);
 		return 0;
 
 	case WM_SYSCOMMAND:
@@ -446,7 +455,7 @@ INT_PTR WCDlg::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 				if (Connect(hwndDlg))
 				{
 					EnableWindow((HWND)lParam, FALSE);
-					EnableCtrlsEx(hwndDlg, 0, ID_CRC, ID_IP, 0);
+					EnableCtrlsEx(hwndDlg, 0, ID_PFX, ID_PASSWORD, ID_IP, 0);
 				}
 			}
 			break;
@@ -469,6 +478,11 @@ INT_PTR WCDlg::DialogProc(HWND hwndDlg, UINT uMsg, WPARAM wParam, LPARAM lParam)
 			_ft = SendMessageW(GetDlgItem(hwndDlg, ID_VIDEO), VBmp::e_save, uTryID, (LPARAM)GetDlgItem(hwndDlg, IDC_EDIT1));
 			break;
 		
+		case ID_SHOWPASS:
+			SendDlgItemMessageW(hwndDlg, ID_PASSWORD, EM_SETPASSWORDCHAR, 
+				SendMessageW((HWND)lParam, BM_GETCHECK, 0, 0) == BST_CHECKED ? 0 : _passchar, 0);
+			InvalidateRect(GetDlgItem(hwndDlg, ID_PASSWORD), 0, 0);
+			break;
 		}
 		break;
 
@@ -660,7 +674,7 @@ BOOL WCDlg::OnInitDialog(HWND hwndDlg)
 		return FALSE;
 	}
 
-	// *crc[*ip]
+	// *pfx[*ip]
 	if (PWSTR name = wcschr(GetCommandLineW(), '*'))
 	{
 		if (PWSTR szip = wcschr(++name, '*'))
@@ -675,7 +689,7 @@ BOOL WCDlg::OnInitDialog(HWND hwndDlg)
 				}
 			}
 		}
-		SetDlgItemTextW(hwndDlg, ID_CRC, name);
+		SetDlgItemTextW(hwndDlg, ID_PFX, name);
 	}
 
 	_hmenu = LoadMenuW((HINSTANCE)&__ImageBase, MAKEINTRESOURCEW(IDR_MENU1));
@@ -688,14 +702,18 @@ BOOL WCDlg::OnInitDialog(HWND hwndDlg)
 		CoTaskMemFree(psz);
 	}
 
+	_passchar = SendDlgItemMessageW(hwndDlg, ID_PASSWORD, EM_GETPASSWORDCHAR, 0, 0);
+
 	return TRUE;
 }
 
-ULONG g_dwThreadId;
+#include "AlertByThreadId.h"
+
+TIDFA g_dwThreadId;
 
 void IO_RUNDOWN::RundownCompleted()
 {
-	ZwAlertThreadByThreadId((HANDLE)(ULONG_PTR)g_dwThreadId);
+	g_dwThreadId.Alert();
 }
 
 class YCameraWnd
@@ -705,14 +723,8 @@ public:
 	static void Unregister();
 };
 
-NTSTATUS GenKeyXY();
-
 void CALLBACK ep(void*)
 {
-	if (PWSTR name = wcschr(GetCommandLineW(), '>'))
-	{
-		ExitProcess(GenKeyXY());
-	}
 	initterm();
 	if (YCameraWnd::Register())
 	{
@@ -721,8 +733,6 @@ void CALLBACK ep(void*)
 			WSADATA wd;
 			if (!WSAStartup(WINSOCK_VERSION, &wd))
 			{
-				g_dwThreadId = GetCurrentThreadId();
-
 				InitLog(L"rcamera.log");
 				WCDlg dlg;
 				dlg.DoModal((HINSTANCE)&__ImageBase, MAKEINTRESOURCEW(IDD_DIALOG1), 0, 0);
@@ -730,7 +740,7 @@ void CALLBACK ep(void*)
 				WSACleanup();
 
 				IO_RUNDOWN::g_IoRundown.BeginRundown();
-				ZwWaitForAlertByThreadId(0, 0);
+				g_dwThreadId.WaitForAlert();
 			}
 
 			CoUninitialize();

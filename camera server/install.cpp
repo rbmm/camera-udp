@@ -103,19 +103,19 @@ HRESULT UnInstallService()
 	return logError("OpenSCManager");
 }
 
-HRESULT InstallService(ULONG64 crc2, ULONG64 crc1)
+HRESULT InstallService()
 {
 	HRESULT hr = E_OUTOFMEMORY;
 
 	if (PWSTR lpBinaryPathName = new WCHAR[MAXSHORT + 1])
 	{
-		ULONG cch = GetModuleFileNameW((HMODULE)&__ImageBase, lpBinaryPathName + 1, MAXUSHORT - 38);
+		ULONG cch = GetModuleFileNameW((HMODULE)&__ImageBase, lpBinaryPathName + 1, MAXUSHORT - 4);
 		if (!(hr = GetLastHresult()))
 		{
 			DbgPrint("InstallService(%ws)...\r\n", lpBinaryPathName + 1);
 			*lpBinaryPathName = '\"';
 
-			swprintf_s(lpBinaryPathName + cch + 1, 37, L"\" \n%I64x\n%I64x", crc2, crc1);
+			wcscpy(lpBinaryPathName + cch + 1, L"\" \n");
 
 			if (SC_HANDLE scm = OpenSCManagerW(0, 0, SC_MANAGER_CREATE_SERVICE))
 			{
@@ -136,7 +136,6 @@ HRESULT InstallService(ULONG64 crc2, ULONG64 crc1)
 					0,					// LocalSystem account
 					0))					// no password
 				{
-
 					static const SERVICE_DESCRIPTION sd = {
 						const_cast<PWSTR>(L"remote controlled camera")
 					};

@@ -464,17 +464,40 @@ class TClientServerR : public CClientServerR
 	{
 		return new CEncTcp(this);
 	}
+
+	virtual HRESULT CreatePubKey(_Out_ BCRYPT_KEY_HANDLE* phKey, _In_ PBYTE pb, _In_ ULONG cb)
+	{
+		HRESULT hr;
+
+		if (HCERTSTORE hCertStore = HR(hr, CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, 0,
+			CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG | CERT_SYSTEM_STORE_LOCAL_MACHINE, L"My")))
+		{
+			CRYPT_HASH_BLOB db = { cb, pb };
+			if (PCCERT_CONTEXT pCertContext = HR(hr, CertFindCertificateInStore(
+				hCertStore, X509_ASN_ENCODING, 0, CERT_FIND_HASH, &db, 0)))
+			{
+				HR(hr, CryptImportPublicKeyInfoEx2(X509_ASN_ENCODING,
+					&pCertContext->pCertInfo->SubjectPublicKeyInfo, CRYPT_OID_INFO_PUBKEY_ENCRYPT_KEY_FLAG, 0, phKey));
+
+				CertFreeCertificateContext(pCertContext);
+			}
+
+			CertCloseStore(hCertStore, 0);
+		}
+
+		return hr;
+	}
 public:
 	using CClientServerR::CClientServerR;
 };
 
-BOOL StartServer(ULONG64 crc2, ULONG64 crc1)
+BOOL StartServer()
 {
 	BOOL fOk = FALSE;
 
 	ULONG err = NOERROR;
 
-	if (CClientServerR* s = new TClientServerR(crc2, crc1, "server"))
+	if (CClientServerR* s = new TClientServerR("server"))
 	{
 		SOCKADDR_INET sa{};
 		sa.Ipv4.sin_family = AF_INET;

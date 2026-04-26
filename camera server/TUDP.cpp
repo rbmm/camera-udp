@@ -2,63 +2,9 @@
 
 _NT_BEGIN
 #include "log.h"
+#include "util.h"
+#include "pkt.h"
 #include "TUDP.h"
-#include "file.h"
-
-NTSTATUS GetBlockLength(_In_ BCRYPT_KEY_HANDLE hKey, _Out_ PULONG BlockLength)
-{
-	ULONG cb;
-	return BCryptGetProperty(hKey, BCRYPT_BLOCK_LENGTH, (PBYTE)BlockLength, sizeof(ULONG), &cb, 0);
-}
-
-NTSTATUS LoadKey(
-				 _In_ PCWSTR pszKey, 
-				 _In_ PCWSTR pszBlobType, 
-				 _Out_ BCRYPT_KEY_HANDLE *phKey, 
-				 _Out_ PULONG BlockLength)
-{
-	PBYTE pb;
-	ULONG cb;
-	NTSTATUS status;
-	if (0 <= (status = ReadFromFile(pszKey, &pb, &cb)))
-	{
-		BCRYPT_ALG_HANDLE hAlgorithm;
-		if (0 <= (status = BCryptOpenAlgorithmProvider(&hAlgorithm, BCRYPT_RSA_ALGORITHM, 0, 0)))
-		{
-			status = BCryptImportKeyPair(hAlgorithm, 0, pszBlobType, phKey, pb, cb, 0);
-
-			BCryptCloseAlgorithmProvider(hAlgorithm, 0);
-
-			if (0 <= status)
-			{
-				status = GetBlockLength(*phKey, BlockLength);
-			}
-		}
-		LocalFree(pb);
-	}
-
-	return status;
-}
-
-NTSTATUS GenAesKey(_Out_ BCRYPT_KEY_HANDLE* phKey, BCRYPT_ALG_HANDLE hAesProv, PBYTE pbSecret, ULONG cbSecret)
-{
-	NTSTATUS status;
-	BCRYPT_KEY_HANDLE hKey;
-
-	if (0 <= (status = BCryptGenerateSymmetricKey(hAesProv, &hKey, 0, 0, pbSecret, cbSecret, 0)))
-	{
-		if (0 <= (status = BCryptSetProperty(hKey, BCRYPT_CHAINING_MODE, 
-			(PBYTE)BCRYPT_CHAIN_MODE_CFB, sizeof(BCRYPT_CHAIN_MODE_CFB), 0)))
-		{
-			*phKey = hKey;
-			return STATUS_SUCCESS;
-		}
-
-		BCryptDestroyKey(hKey);
-	}
-
-	return status;
-}
 
 bool operator==(const SOCKADDR_INET& psi1, const SOCKADDR_INET& psi2)
 {
@@ -98,12 +44,10 @@ void PrintIP(PSOCKADDR_INET from, ULONG cb)
 	}
 }
 
-struct C_PACKET 
+struct C_PACKET
 {
-	enum : ULONG64 { e_magic = 'AP_C' + 'TEKC'*0x100000000ULL } magic;
-	ULONG64 crcKey;
-	ULONG64 mcookie;
-	ULONG64 rcookie;
+	ULONG64 client_cookie;
+	UCHAR data[];
 };
 
 struct P_PACKET
@@ -114,89 +58,19 @@ struct P_PACKET
 
 struct E_PACKET 
 {
-	ULONG64 crc;
-	union {
-		UCHAR zero[4];
-		ULONG DataLength;// _byteswap_ulong
-	};
 	ULONG MsgLength;
 	ULONG type;
 	USHORT M;
 	USHORT N;
-	UCHAR aes[0x20];
 	UCHAR Buf[];
-
-	static ULONG size(ULONG BlockLength, ULONG DataLength)
-	{
-		ULONG a = offsetof(E_PACKET, zero) + BlockLength, b = offsetof(E_PACKET, Buf) + DataLength;
-		return __max(a, b);
-	}
-
-	NTSTATUS Encrypt(BCRYPT_KEY_HANDLE hKey, ULONG BlockLength)
-	{
-		DataLength = _byteswap_ulong(DataLength);
-		return BCryptEncrypt(hKey, zero, BlockLength, 0, 0, 0, zero, BlockLength, &BlockLength, BCRYPT_PAD_NONE);
-	}
-
-	NTSTATUS Decrypt(BCRYPT_KEY_HANDLE hKey, ULONG BlockLength)
-	{
-		NTSTATUS status = BCryptDecrypt(hKey, zero, BlockLength, 0, 0, 0, zero, BlockLength, &BlockLength, BCRYPT_PAD_NONE);
-		DataLength = _byteswap_ulong(DataLength);
-		return status;
-	}
-
-	NTSTATUS Encrypt(_In_ BCRYPT_ALG_HANDLE hAesProv, _In_ PBYTE pb, _In_ ULONG cb, _Out_ PULONG pcb)
-	{
-		BCRYPT_KEY_HANDLE hKey;
-		NTSTATUS status;
-
-		if (0 <= (status = BCryptGenRandom(0, aes, sizeof(aes), BCRYPT_USE_SYSTEM_PREFERRED_RNG)) &&
-			0 <= (status = GenAesKey(&hKey, hAesProv, aes, sizeof(aes))))
-		{
-			status = BCryptEncrypt(hKey, pb, cb, 0, 0, 0, Buf, cb, pcb, 0);
-
-			BCryptDestroyKey(hKey);
-
-			DataLength = *pcb;
-		}
-
-		return status;
-	}
-
-	NTSTATUS Decrypt(_In_ BCRYPT_ALG_HANDLE hAesProv, _In_ PBYTE pb, _In_ ULONG cb, _Out_ PULONG pcb)
-	{
-		if (ULONG Length = DataLength)
-		{
-			if (offsetof(E_PACKET, Buf) + Length > cb)
-			{
-				return STATUS_BAD_DATA;
-			}
-
-			NTSTATUS status;
-			BCRYPT_KEY_HANDLE hKey;
-			if (0 <= (status = GenAesKey(&hKey, hAesProv, aes, sizeof(aes))))
-			{
-				status = BCryptDecrypt(hKey, Buf, Length, 0, 0, 0, pb, Length, pcb, 0);
-				BCryptDestroyKey(hKey);
-			}
-
-			return status;
-		}
-		
-		*pcb = 0;
-		return 0;
-	}
 };
-
-C_ASSERT(sizeof(E_PACKET)==0x38);
 
 //////////////////////////////////////////////////////////////////////////
 // Endpoint
 
 Endpoint::~Endpoint()
 {
-	if (m_hPub) BCryptDestroyKey(m_hPub);
-	if (m_hPriv) BCryptDestroyKey(m_hPriv);
+	if (m_hKey) BCryptDestroyKey(m_hKey);
 	if (m_msgb) delete [] m_msgb;
 	m_parent->Release();
 	DbgPrint("%hs<%p>(%hs)\r\n", __FUNCTION__, this, m_parent->m_name);
@@ -209,19 +83,42 @@ Endpoint::Endpoint(CClientServerR* parent) : m_parent(parent)
 	BCryptGenRandom(0, (PBYTE)&m_cookie, sizeof(m_cookie), BCRYPT_USE_SYSTEM_PREFERRED_RNG);
 }
 
-NTSTATUS Endpoint::Connect(PSOCKADDR_INET psi, ULONG64 crc2, ULONG64 crc1)
+NTSTATUS Endpoint::Connect(PSOCKADDR_INET psi, _In_opt_ PBYTE pb, _In_opt_ ULONG cb)
 {
-	SetDisconnectTime(e_inactive_time);
+	NTSTATUS status;
 
-	m_parent->AddConnection(this);
-
-	if (NTSTATUS status = Init(psi, crc2, crc1))
+	if (NOERROR == (status = Init(psi, 0)))
 	{
-		m_parent->RemoveConnection(this);
-		return status;
+		SetDisconnectTime(e_inactive_time);
+
+		m_parent->AddConnection(this);
+
+		CDataPacket* packet;
+		C_PACKET* pcp;
+		if (UH_PACKET* pkt = UH_PACKET::Plain_Create(0, sizeof(C_PACKET) + cb, &packet, (BYTE**)&pcp))
+		{
+			pkt->cookie = 0;
+			pcp->client_cookie = m_cookie;
+			if (cb)
+			{
+				memcpy(pcp->data, pb, cb);
+			}
+			m_sa = *psi;
+			status = m_parent->SendTo(psi, packet);
+			packet->Release();
+		}
+		else
+		{
+			status = STATUS_NO_MEMORY;
+		}
+
+		if (status)
+		{
+			m_parent->RemoveConnection(this);
+		}
 	}
 
-	return STATUS_SUCCESS;
+	return status;
 }
 
 void Endpoint::Disconnect()
@@ -235,28 +132,6 @@ void Endpoint::ping()
 {
 	P_PACKET packet = { P_PACKET::e_magic, m_rcookie };
 	m_parent->SendTo(&m_sa, &packet, sizeof(packet));
-}
-
-NTSTATUS Endpoint::LoadPubKey(ULONG64 crc)
-{
-	WCHAR name[18];
-	if (0 < swprintf_s(name, _countof(name), L"%016I64x", crc))
-	{
-		return LoadKey(name, BCRYPT_RSAPUBLIC_BLOB, &m_hPub, &m_PubBlockLength);
-	}
-
-	return STATUS_INTERNAL_ERROR;
-}
-
-NTSTATUS Endpoint::LoadPrivKey(ULONG64 crc2, ULONG64 crc1)
-{
-	WCHAR name[34];
-	if (0 < swprintf_s(name, _countof(name), L"%016I64x%016I64x", crc2, crc1))
-	{
-		return LoadKey(name, BCRYPT_RSAPRIVATE_BLOB, &m_hPriv, &m_PrivBlockLength);
-	}
-
-	return STATUS_INTERNAL_ERROR;
 }
 
 Endpoint::MSGB* Endpoint::get(ULONG M, ULONG cbMsg)
@@ -299,85 +174,46 @@ Endpoint::MSGB* Endpoint::get(ULONG M, ULONG cbMsg)
 
 NTSTATUS Endpoint::OnData(E_PACKET* packet, ULONG cb)
 {
-	if (offsetof(E_PACKET, zero) + m_PrivBlockLength > cb)
-	{
-		return STATUS_BUFFER_TOO_SMALL;
-	}
-
 	NTSTATUS status;
-	if (0 <= (status = packet->Decrypt(m_hPriv, m_PrivBlockLength)))
+	SetDisconnectTime(e_inactive_time);
+
+	AcquireSRWLockExclusive(&m_lock);
+	MSGB* msgb = get(packet->M, packet->MsgLength);
+	ReleaseSRWLockExclusive(&m_lock);
+
+	if (!msgb)
 	{
-		SetDisconnectTime(e_inactive_time);
+		return 0;
+	}
 
-		AcquireSRWLockExclusive(&m_lock);
-		MSGB* msgb = get(packet->M, packet->MsgLength);
-		ReleaseSRWLockExclusive(&m_lock);
+	LONG N = packet->N;
 
-		if (!msgb)
+	DbgPrint("%hs: << %u.%u [%x]\r\n", m_parent->m_name, packet->M, N, cb);
+
+	if (0x40 > N && !_interlockedbittestandset64(&msgb->m_bits, N))
+	{
+		memcpy(msgb->m_buf + N * max_packet_size, packet->Buf, cb);
+
+		msgb->m_tick = GetTickCount();
+
+		if (InterlockedExchangeAddNoFence(&msgb->m_cbNeed, -(LONG)cb) == (LONG)cb && !((m_bits + 1) & m_bits))
 		{
-			return 0;
-		}
+			DbgPrint("%u: ======== %x packet\r\n", GetTickCount() - m_t, packet->M);
 
-		LONG N = packet->N;
+			m_t = GetTickCount();
 
-		DbgPrint("%hs: << %u.%u [%x]\r\n", m_parent->m_name, packet->M, N, cb);
+			status = OnUserData(packet->type, msgb->m_buf, packet->MsgLength);
 
-		if (0x3F < N)
-		{
-			return STATUS_BAD_DATA;
-		}
+			msgb->m_bits = 0;
 
-		if (!_interlockedbittestandset64(&msgb->m_bits, N))
-		{
-			if (0 <= (status = packet->Decrypt(m_parent->m_hAesProv, msgb->m_buf + N * max_packet_size, cb, &cb)))
-			{
-				msgb->m_tick = GetTickCount();
-
-				if (InterlockedExchangeAddNoFence(&msgb->m_cbNeed, -(LONG)cb) == (LONG)cb && !((m_bits + 1) & m_bits))
-				{
-					DbgPrint("%u: ======== %x packet\r\n", GetTickCount() - m_t, packet->M);
-
-					m_t = GetTickCount();
-
-					status = OnUserData(packet->type, msgb->m_buf, packet->MsgLength);
-
-					msgb->m_bits = 0;
-
-					return status;
-				}
-			}
+			return status;
 		}
 	}
 
-	return status;
+	return STATUS_BAD_DATA;
 }
 
-NTSTATUS Endpoint::OnConnect(ULONG64 crc, ULONG64 cookie)
-{
-	m_rcookie = cookie;
-
-	NTSTATUS status = LoadPubKey(crc);
-
-	if (0 <= status)
-	{
-		SetDisconnectTime(e_inactive_time);
-
-		return OnConnect();
-	}
-
-	return status;
-}
-
-NTSTATUS Endpoint::Accept(PSOCKADDR_INET psi, ULONG64 crc2, ULONG64 crc1, ULONG64 crc, ULONG64 cookie)
-{
-	m_rcookie = cookie;
-
-	NTSTATUS status = LoadPubKey(crc);
-
-	return 0 > status ? status : Init(psi, crc2, crc1, cookie);
-}
-
-NTSTATUS Endpoint::Init(PSOCKADDR_INET psi, ULONG64 crc2, ULONG64 crc1, ULONG64 cookie)
+NTSTATUS Endpoint::Init(PSOCKADDR_INET psi, ULONG64 rcookie)
 {
 	if (!m_rp.Init())
 	{
@@ -407,74 +243,42 @@ NTSTATUS Endpoint::Init(PSOCKADDR_INET psi, ULONG64 crc2, ULONG64 crc1, ULONG64 
 		}
 	}
 
-	NTSTATUS status = LoadPrivKey(crc2, crc1);
+	m_sa = *psi, m_rcookie = rcookie;
 
-	if (0 > status)
-	{
-		return status;
-	}
-
-	m_sa = *psi;
-
-	if (CDataPacket* packet = new(sizeof(C_PACKET)) CDataPacket)
-	{
-		C_PACKET* cpacket = (C_PACKET*)packet->getData();
-
-		if (cookie)
-		{
-			status = Accept(psi);
-		}
-
-		cpacket->magic = C_PACKET::e_magic;
-		cpacket->mcookie = status ? 0 : m_cookie;
-		cpacket->rcookie = cookie;
-		cpacket->crcKey = crc1;
-
-		packet->setDataSize(sizeof(C_PACKET));
-
-		NTSTATUS s = m_parent->SendTo(psi, packet);
-
-		packet->Release();
-
-		return status ? status : s;
-	}
-
-	return STATUS_NO_MEMORY;
+	return NOERROR;
 }
 
 NTSTATUS Endpoint::SendMsg(ULONG MsgLength, ULONG type, PBYTE pb, ULONG cb, USHORT M, USHORT N)
 {
-	ULONG BlockLength = m_PubBlockLength;
+	NTSTATUS status = STATUS_NO_MEMORY;
+	CDataPacket* packet;
 
-	if (CDataPacket* packet = new(E_PACKET::size(BlockLength, cb)) CDataPacket)
+	union {
+		PBYTE pbData;
+		E_PACKET* epacket;
+	};
+	if (UH_PACKET* pkt = UH_PACKET::AES_Allocate(sizeof(E_PACKET) + cb, &pbData, &packet))
 	{
-		E_PACKET* epacket = (E_PACKET*)packet->getData();
-
-		epacket->crc = m_rcookie;
-		epacket->DataLength = 0;
 		epacket->M = M, epacket->N = N;
 		epacket->type = type, epacket->MsgLength = MsgLength;
 
-		NTSTATUS status;
+		memcpy(epacket->Buf, pb, cb);
 
-		if (0 <= (status = cb ? epacket->Encrypt(m_parent->m_hAesProv, pb, cb, &cb) : 0) &&
-			0 <= (status = epacket->Encrypt(m_hPub, BlockLength)))
+		if (0 <= (status = pkt->AES_Encode(m_hKey, pbData, sizeof(E_PACKET) + cb)))
 		{
-			packet->setDataSize(E_PACKET::size(BlockLength, cb));
+			pkt->cookie = m_rcookie;
 			status = m_parent->SendTo(&m_sa, packet);
 		}
 
 		packet->Release();
-
-		return status;
 	}
 
-	return STATUS_NO_MEMORY;
+	return status;
 }
 
 NTSTATUS Endpoint::SendUserData(ULONG type, PBYTE pb, ULONG cb)
 {
-	if (max_packet_size * 0x40 < cb)
+	if (max_packet_size * 0x40 < sizeof(E_PACKET) + cb)
 	{
 		return STATUS_PORT_MESSAGE_TOO_LONG;
 	}
@@ -526,16 +330,13 @@ void CClientServerR::AddListen()
 
 BOOL CClientServerR::Start(ULONG n, PSOCKADDR_INET psi)
 {
-	if (0 <= BCryptOpenAlgorithmProvider(&m_hAesProv, BCRYPT_AES_ALGORITHM, 0, 0))
+	if (!Create(psi))
 	{
-		if (!Create(psi))
+		do
 		{
-			do 
-			{
-				AddListen();
-			} while (--n);
-			return m_nPackets;
-		}
+			AddListen();
+		} while (--n);
+		return m_nPackets;
 	}
 	return FALSE;
 }
@@ -598,7 +399,7 @@ void CClientServerR::OnRecv(PSTR buf, ULONG cb, CDataPacket* packet, SOCKADDR_IN
 	case ERROR_PORT_UNREACHABLE:
 		if (RecvFrom(packet) == NOERROR)
 		{
-			DbgPrint("reuse packet<%p>\r\n", packet);
+			//DbgPrint("reuse packet<%p>\r\n", packet);
 			return;
 		}
 	}
@@ -611,38 +412,42 @@ void CClientServerR::OnRecv(PSTR buf, ULONG cb, CDataPacket* packet, SOCKADDR_IN
 	}
 }
 
-void CClientServerR::OnConnect(C_PACKET* packet, PSOCKADDR_INET psi)
+void CClientServerR::OnConnect(_In_ ULONG64 client_cookie, _In_ PBYTE pb, _In_ ULONG cb, PSOCKADDR_INET psi)
 {
-	if (C_PACKET::e_magic == packet->magic)
+	BCRYPT_KEY_HANDLE hPubKey;
+
+	if (NOERROR == CreatePubKey(&hPubKey, pb, cb))
 	{
-		if (ULONG64 rcookie = packet->rcookie)
+		if (Endpoint* p = CreateEndpoint())
 		{
-			if (Endpoint* p = get(rcookie))
+			AddConnection(p);
+
+			HRESULT hr;
+
+			if (NOERROR == (hr = p->Init(psi, client_cookie)))
 			{
-				if (*psi == p->m_sa)
+				if (NOERROR == (hr = p->Accept(psi)))
 				{
-					if (!packet->mcookie || p->OnConnect(packet->crcKey, packet->mcookie))
+					CDataPacket* packet;
+					if (NOERROR == (hr = UH_PACKET::Encode(hPubKey,
+						(PBYTE)&p->m_cookie, sizeof(p->m_cookie), &packet, &p->m_hKey)))
 					{
-						RemoveConnection(p);
+						UH_PACKET::get(packet)->cookie = client_cookie;
+						hr = SendTo(psi, packet);
+						packet->Release();
 					}
 				}
-				p->Release();
 			}
-		}
-		else
-		{
-			if (Endpoint* p = CreateEndpoint())
+
+			if (hr)
 			{
-				AddConnection(p);
-
-				if (p->Accept(psi, m_crc2, m_crc1, packet->crcKey, packet->mcookie))
-				{
-					RemoveConnection(p);
-				}
-
-				p->Release();
+				RemoveConnection(p);
 			}
+
+			p->Release();
 		}
+
+		BCryptDestroyKey(hPubKey);
 	}
 }
 
@@ -685,22 +490,42 @@ void CClientServerR::OnData(PBYTE pb, ULONG cb, PSOCKADDR_INET psi)
 		OnPing((P_PACKET*)pb, psi);
 		break;
 
-	case sizeof(C_PACKET):
-		OnConnect((C_PACKET*)pb, psi);
-		break;
-
 	default:
-		if (offsetof(E_PACKET, Buf) < cb)
+		UH_PACKET* pkt = (UH_PACKET*)pb;
+		if (pkt->IsSizeValid(cb))
 		{
-			E_PACKET* packet = (E_PACKET*)pb;
-			if (Endpoint* p = get(packet->crc))
+			if (Endpoint* p = get(pkt->cookie))
 			{
 				if (*psi == p->m_sa)
 				{
 					NTSTATUS status = STATUS_TOO_LATE;
 					if (p->m_rp.Acquire())
 					{
-						status = p->OnData(packet, cb);
+						if (p->m_rcookie)
+						{
+							if (NOERROR == pkt->AES_Decode(p->m_hKey, &pb, &cb))
+							{
+								if (sizeof(E_PACKET) <= cb)
+								{
+									status = p->OnData(reinterpret_cast<E_PACKET*>(pb), cb - sizeof(E_PACKET));
+								}
+							}
+						}
+						else
+						{
+							if (BCRYPT_KEY_HANDLE hKey = p->GetPrivateKey())
+							{
+								if (NOERROR == pkt->Decode(hKey, &pb, &cb, &p->m_hKey))
+								{
+									if (sizeof(ULONG64) == cb)
+									{
+										p->m_rcookie = *(ULONG64*)pb;
+
+										status = p->OnConnect();
+									}
+								}
+							}
+						}
 
 						if (p->m_rp.Release())
 						{
@@ -714,6 +539,14 @@ void CClientServerR::OnData(PBYTE pb, ULONG cb, PSOCKADDR_INET psi)
 					}
 				}
 				p->Release();
+			}
+			else 
+			{
+				if (pkt->IsPlainData(&cb, &pb) && sizeof(C_PACKET) < cb)
+				{
+					OnConnect(reinterpret_cast<C_PACKET*>(pb)->client_cookie,
+						reinterpret_cast<C_PACKET*>(pb)->data, cb - sizeof(C_PACKET), psi);
+				}
 			}
 		}
 	}

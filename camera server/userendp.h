@@ -25,6 +25,11 @@ class CEncTcp : public Endpoint
 
 	virtual NTSTATUS OnUserData(ULONG type, PBYTE pb, ULONG cb);
 
+	virtual BCRYPT_KEY_HANDLE GetPrivateKey()
+	{
+		return 0;
+	}
+
 	virtual ~CEncTcp();
 
 public:
